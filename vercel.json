@@ -1,0 +1,56 @@
+{
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/Accounting",
+      "destination": "/accounting",
+      "permanent": true
+    },
+    {
+      "source": "/online-existence",
+      "destination": "/branding",
+      "permanent": true
+    },
+    {
+      "source": "/Online-Existence",
+      "destination": "/branding",
+      "permanent": true
+    },
+    {
+      "source": "/online-presence",
+      "destination": "/branding",
+      "permanent": true
+    },
+    {
+      "source": "/Property-Management",
+      "destination": "/property-management",
+      "permanent": true
+    },
+    {
+      "source": "/Our-Team",
+      "destination": "/our-team",
+      "permanent": true
+    },
+    {
+      "source": "/shor-term-rental",
+      "destination": "/short-term-rental",
+      "permanent": true
+    },
+    {
+      "source": "/Short-Term-Rentals",
+      "destination": "/short-term-rental",
+      "permanent": true
+    },
+    {
+      "source": "/Short-Term-Rental",
+      "destination": "/short-term-rental",
+      "permanent": true
+    },
+    {
+      "source": "/Blog",
+      "destination": "/blog",
+      "permanent": true
+    }
+  ]
+}
