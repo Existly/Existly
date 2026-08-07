@@ -458,7 +458,7 @@ Q: How is your team structured?
 A: Our team is structured to provide specialized support for every aspect of your business.
 
 Q: Where is your team located?
-A: Our team operates remotely, with professionals based in Pakistan, UK and Australia who support clients across the United States. This allows us to provide reliable, high-quality service with extended coverage and cost-effective solutions.
+A: Our team works on-site from our offices, with professionals based in Pakistan, UK and Australia who support clients across the United States. This allows us to provide reliable, high-quality service with extended coverage and cost-effective solutions.
 
 Q: What time zone does your team work in?
 A: We cover everytime zone in US, UK, Canada, Australia
