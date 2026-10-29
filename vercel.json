@@ -54,17 +54,12 @@
     },
     {
       "source": "/facilities-support",
-      "destination": "/uk/",
+      "destination": "/uk",
       "permanent": true
     },
     {
       "source": "/Facilities-Support",
-      "destination": "/uk/",
-      "permanent": true
-    },
-    {
-      "source": "/uk",
-      "destination": "/uk/",
+      "destination": "/uk",
       "permanent": true
     },
     {
@@ -75,7 +70,7 @@
           "value": "existlysvc.co.uk"
         }
       ],
-      "destination": "https://existlysvc.com/uk/",
+      "destination": "https://existlysvc.com/uk",
       "permanent": true
     },
     {
@@ -86,7 +81,7 @@
           "value": "www.existlysvc.co.uk"
         }
       ],
-      "destination": "https://existlysvc.com/uk/",
+      "destination": "https://existlysvc.com/uk",
       "permanent": true
     }
   ]
