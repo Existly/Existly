@@ -5,6 +5,49 @@
  *           scroll-triggered animations, and sticky header.
  */
 
+/**
+ * 0. Smooth (momentum) scrolling — Lenis
+ *
+ * Purely additive: if lenis.min.js fails to load, or the visitor asks for
+ * reduced motion, we return early and the browser's own scrolling takes over
+ * unchanged. Nothing on the page depends on Lenis existing.
+ */
+let lenis = null;
+
+(function initSmoothScroll() {
+  if (typeof Lenis === 'undefined') return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  lenis = new Lenis({
+    duration: 1.05,
+    easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+    smoothWheel: true,
+    touchMultiplier: 1.6
+  });
+
+  function raf(time) {
+    lenis.raf(time);
+    requestAnimationFrame(raf);
+  }
+  requestAnimationFrame(raf);
+
+  // Anchor links: Lenis has taken scroll-behavior off <html>, so in-page
+  // anchors would otherwise jump instantly. Route them back through Lenis.
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('a[href^="#"]');
+    if (!link) return;
+    const id = link.getAttribute('href');
+    if (!id || id === '#') return;
+    const target = document.querySelector(id);
+    if (!target) return;
+    e.preventDefault();
+    lenis.scrollTo(target, { offset: -100 });
+  });
+
+  // Expose for anything else that needs to drive the scroll position.
+  window.existlyLenis = lenis;
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
   if (!document.getElementById('remove-green-chromakey')) {
     const svgDiv = document.createElement('div');
@@ -213,12 +256,16 @@ function initSubpageFilters() {
       
       if (targetSection) {
         const offset = 100; // Header height offset
-        const targetPosition = targetSection.getBoundingClientRect().top + window.pageYOffset - offset;
-        
-        window.scrollTo({
-          top: targetPosition,
-          behavior: 'smooth'
-        });
+
+        if (lenis) {
+          lenis.scrollTo(targetSection, { offset: -offset });
+        } else {
+          const targetPosition = targetSection.getBoundingClientRect().top + window.pageYOffset - offset;
+          window.scrollTo({
+            top: targetPosition,
+            behavior: 'smooth'
+          });
+        }
 
         // Set active immediately
         filterBtns.forEach(b => b.classList.remove('active'));
@@ -296,10 +343,15 @@ function initContactForm() {
     // Build payload
     const phoneInput = contactForm.querySelector('input[name="phone"]');
     let fullPhone = phoneInput.value;
-    if (window.intlTelInputGlobals) {
-      const iti = window.intlTelInputGlobals.getInstance(phoneInput);
-      if (iti) fullPhone = iti.getNumber();
+    // getInstance moved onto window.intlTelInput in v20; the site loads v23,
+    // so the old intlTelInputGlobals lookup always failed and the country
+    // code was silently dropped from every submission.
+    if (window.intlTelInput && typeof window.intlTelInput.getInstance === 'function') {
+      const iti = window.intlTelInput.getInstance(phoneInput);
+      if (iti) fullPhone = iti.getNumber() || fullPhone;
     }
+
+    const honeypot = contactForm.querySelector('input[name="company"]');
 
     const formData = {
       firstName: contactForm.querySelector('input[name="firstName"]').value,
@@ -307,7 +359,8 @@ function initContactForm() {
       email: contactForm.querySelector('input[name="email"]').value,
       phone: fullPhone,
       subject: contactForm.querySelector('input[name="subject"]').value,
-      message: contactForm.querySelector('textarea[name="message"]').value
+      message: contactForm.querySelector('textarea[name="message"]').value,
+      company: honeypot ? honeypot.value : ''
     };
 
     // Send API request
@@ -393,7 +446,7 @@ function showSuccessModal(name) {
       <div style="width: 60px; height: 60px; border-radius: 50%; background: #10B981; color: white; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px auto;">
         <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
       </div>
-      <h3 style="font-size: 1.75rem; color: #0F172A; margin-bottom: 12px; font-family: 'Outfit', sans-serif;">Thank You, ${name}!</h3>
+      <h3 style="font-size: 1.75rem; color: #0F172A; margin-bottom: 12px; font-family: var(--font-heading);">Thank You, ${name}!</h3>
       <p style="color: #475569; line-height: 1.6; margin-bottom: 24px;">Your message has been sent successfully. An Existly consultant will review your inquiry and get back to you within 24 hours.</p>
       <button class="btn btn-primary" id="closeSuccessModal" style="width: 100%;">Got it, thanks!</button>
     </div>
@@ -736,15 +789,63 @@ document.addEventListener('DOMContentLoaded', () => {
   function appendMessage(role, text) {
     const msgDiv = document.createElement('div');
     msgDiv.classList.add('message', role === 'user' ? 'user-message' : 'ai-message');
-    
-    // Simple parsing: Newlines to <br> and Markdown Links to styled <a> tags
-    let formattedText = text.replace(/\n/g, '<br>');
-    formattedText = formattedText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="chat-inline-btn" target="_blank">$1</a>');
 
-    msgDiv.innerHTML = `<div class="message-content">${formattedText}</div>`;
-    
+    const content = document.createElement('div');
+    content.classList.add('message-content');
+    renderMessageText(content, text == null ? '' : String(text));
+
+    msgDiv.appendChild(content);
     chatMessages.appendChild(msgDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  // Renders newlines as <br> and [label](url) as styled links.
+  // Every non-link fragment is inserted as a text node, so model output
+  // (or a replayed sessionStorage transcript) can never become markup.
+  function renderMessageText(container, text) {
+    const linkPattern = /\[([^\]]+)\]\(([^)\s]+)\)/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = linkPattern.exec(text)) !== null) {
+      appendTextWithBreaks(container, text.slice(lastIndex, match.index));
+
+      const href = safeHttpUrl(match[2]);
+      if (href) {
+        const link = document.createElement('a');
+        link.href = href;
+        link.classList.add('chat-inline-btn');
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = match[1];
+        container.appendChild(link);
+      } else {
+        // Unsupported scheme — show the raw markdown rather than linking it
+        appendTextWithBreaks(container, match[0]);
+      }
+
+      lastIndex = linkPattern.lastIndex;
+    }
+
+    appendTextWithBreaks(container, text.slice(lastIndex));
+  }
+
+  function appendTextWithBreaks(container, chunk) {
+    if (!chunk) return;
+    chunk.split('\n').forEach((line, i) => {
+      if (i > 0) container.appendChild(document.createElement('br'));
+      if (line) container.appendChild(document.createTextNode(line));
+    });
+  }
+
+  // Only http(s) links are allowed — blocks javascript:, data: and vbscript: payloads.
+  function safeHttpUrl(raw) {
+    try {
+      const url = new URL(raw, window.location.origin);
+      return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   // Load history from sessionStorage (Persists during navigation, clears when tab is closed)
@@ -866,5 +967,77 @@ document.addEventListener('DOMContentLoaded', () => {
   
   chatPhoneInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendPhoneBtn.click();
+  });
+});
+
+// --- Footer copyright year ---
+// Set at runtime so the year is never stale in 17 hand-maintained files.
+document.addEventListener('DOMContentLoaded', () => {
+  const year = String(new Date().getFullYear());
+  document.querySelectorAll('.footer-year').forEach(el => { el.textContent = year; });
+});
+
+/**
+ * Service panels — replaces the stock illustrations on service pages.
+ *
+ * The supplied images were generated in five unrelated palettes (orange,
+ * green, purple...) and matched neither the brand nor each other. Rather
+ * than commission a new set, each service block's graphic column is built
+ * from content already in the block: an index number, the service name,
+ * and its first four deliverables as chips.
+ *
+ * Progressive enhancement: this runs after load and swaps the wrapper's
+ * contents. If JS fails, the original image simply remains — the page is
+ * never left with an empty column.
+ */
+document.addEventListener('DOMContentLoaded', () => {
+  const wrappers = document.querySelectorAll('.service-block .service-image-wrapper');
+  if (!wrappers.length) return;
+
+  let n = 0;
+  wrappers.forEach((wrapper) => {
+    const block = wrapper.closest('.service-block');
+    if (!block) return;
+
+    const titleEl = block.querySelector('.service-block-title');
+    const name = titleEl ? titleEl.textContent.replace(/\s+/g, ' ').trim() : '';
+    if (!name) return; // no name, keep the image
+
+    n += 1;
+    const num = String(n).padStart(2, '0');
+
+    const chips = Array.from(block.querySelectorAll('.service-bullet-item h4'))
+      .slice(0, 4)
+      .map(h => h.textContent.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+
+    const panel = document.createElement('div');
+    panel.className = 'service-panel';
+
+    const numEl = document.createElement('span');
+    numEl.className = 'service-panel-num';
+    numEl.setAttribute('aria-hidden', 'true');
+    numEl.textContent = num;
+    panel.appendChild(numEl);
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'service-panel-name';
+    nameEl.textContent = name;
+    panel.appendChild(nameEl);
+
+    if (chips.length) {
+      const list = document.createElement('div');
+      list.className = 'service-panel-chips';
+      chips.forEach(c => {
+        const chip = document.createElement('span');
+        chip.className = 'service-panel-chip';
+        chip.textContent = c;
+        list.appendChild(chip);
+      });
+      panel.appendChild(list);
+    }
+
+    wrapper.classList.add('service-panel-host');
+    wrapper.replaceChildren(panel);
   });
 });

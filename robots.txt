@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+# Serverless endpoints — nothing crawlable, and crawling /api/chat costs money.
+Disallow: /api/
+
+Sitemap: https://existlysvc.com/sitemap.xml

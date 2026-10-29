@@ -7,8 +7,21 @@ const PORT = process.env.PORT || 8000;
 
 app.use(express.json());
 
+// Never hand out source. Vercel does not static-serve api/, but this dev
+// server would, so block it here to keep local behaviour honest.
+app.use((req, res, next) => {
+  if (/^\/(api|node_modules)\//i.test(req.path) && req.method === 'GET') {
+    return res.status(404).send('Not found');
+  }
+  next();
+});
+
 // Serve static files from the project root
-app.use(express.static(path.join(__dirname)));
+// `extensions: ['html']` mirrors Vercel's cleanUrls locally, so /property-management
+// and /uk/landlords resolve to their .html files here exactly as they do in
+// production. Without it every internal link 404s in local dev, because the
+// links are extensionless by design.
+app.use(express.static(path.join(__dirname), { extensions: ['html'] }));
 
 // Temporary local route to test the Vercel serverless function
 const chatApi = require('./api/chat.js');

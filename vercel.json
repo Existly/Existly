@@ -51,6 +51,43 @@
       "source": "/Blog",
       "destination": "/blog",
       "permanent": true
+    },
+    {
+      "source": "/facilities-support",
+      "destination": "/uk/",
+      "permanent": true
+    },
+    {
+      "source": "/Facilities-Support",
+      "destination": "/uk/",
+      "permanent": true
+    },
+    {
+      "source": "/uk",
+      "destination": "/uk/",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "existlysvc.co.uk"
+        }
+      ],
+      "destination": "https://existlysvc.com/uk/",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.existlysvc.co.uk"
+        }
+      ],
+      "destination": "https://existlysvc.com/uk/",
+      "permanent": true
     }
   ]
 }

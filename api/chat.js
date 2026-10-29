@@ -1,10 +1,25 @@
 const { GoogleGenAI, Type } = require('@google/genai');
 const { Resend } = require('resend');
-const EXISTLY_KNOWLEDGE_BASE = require('./knowledge_base');
+const EXISTLY_KNOWLEDGE_BASE = require('./_lib/knowledge_base');
+const {
+  lazyClient,
+  sheetSafe,
+  escapeHtml,
+  rateLimit,
+  clientIp,
+  originAllowed
+} = require('./_lib/security');
 
-// Initialize APIs using Environment Variables
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize APIs using Environment Variables (lazily — see _lib/security.js)
+const getAi = lazyClient('GEMINI_API_KEY', (key) => new GoogleGenAI({ apiKey: key }));
+const getResend = lazyClient('RESEND_API_KEY', (key) => new Resend(key));
+
+// The knowledge base is re-sent as the system prompt on every request, so an
+// unbounded caller-supplied history is a direct paid-token amplification risk.
+const MAX_HISTORY_TURNS = 40;
+const MAX_MESSAGE_LENGTH = 4000;
+const RATE_LIMIT = 30;             // messages per IP...
+const RATE_WINDOW_MS = 5 * 60_000; // ...per 5 minutes
 
 const systemPrompt = `You are a friendly, professional AI consultant for 'Existly'.
 
@@ -72,17 +87,43 @@ module.exports = async (req, res) => {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  try {
-    const { history, message } = req.body;
+  if (!originAllowed(req)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
 
-    const formattedHistory = history.map(msg => ({
-      role: msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.content }]
-    }));
+  const limit = rateLimit(`chat:${clientIp(req)}`, RATE_LIMIT, RATE_WINDOW_MS);
+  if (!limit.allowed) {
+    res.setHeader('Retry-After', String(limit.retryAfter));
+    return res.status(429).json({ error: "You're sending messages a little too quickly. Please wait a moment." });
+  }
+
+  try {
+    const { history, message } = req.body || {};
+
+    const trimmedMessage = (message == null ? '' : String(message)).trim().slice(0, MAX_MESSAGE_LENGTH);
+    if (!trimmedMessage) {
+      return res.status(400).json({ error: 'Please enter a message.' });
+    }
+
+    // Keep only the most recent turns, and cap each one.
+    const safeHistory = Array.isArray(history) ? history.slice(-MAX_HISTORY_TURNS) : [];
+
+    const formattedHistory = safeHistory
+      .filter(msg => msg && msg.content != null)
+      .map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: String(msg.content).slice(0, MAX_MESSAGE_LENGTH) }]
+      }));
+
+    const ai = getAi();
+    if (!ai) {
+      console.error('GEMINI_API_KEY is not set — chat endpoint unavailable.');
+      return res.status(503).json({ error: 'The assistant is temporarily unavailable. Please use the contact form.' });
+    }
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.1-flash-lite',
-      contents: [...formattedHistory, { role: 'user', parts: [{ text: message }] }],
+      contents: [...formattedHistory, { role: 'user', parts: [{ text: trimmedMessage }] }],
       config: {
         systemInstruction: systemPrompt,
         tools: [{ functionDeclarations: [saveLeadDeclaration] }]
@@ -98,16 +139,19 @@ module.exports = async (req, res) => {
         const { name, email, phone, context } = call.args;
         
         try {
+          const resend = getResend();
+          if (!resend) throw new Error('RESEND_API_KEY is not set');
+
           await resend.emails.send({
             from: 'Existly Bot <onboarding@resend.dev>', // Update to a verified domain when ready
             to: 'info@existlysvc.com',
             subject: '🚨 New Lead Captured by Existly Bot!',
             html: `
               <h2>New Lead Details</h2>
-              <p><strong>Name:</strong> ${name}</p>
-              <p><strong>Email:</strong> ${email}</p>
-              <p><strong>Phone:</strong> ${phone}</p>
-              <p><strong>Context:</strong> ${context}</p>
+              <p><strong>Name:</strong> ${escapeHtml(name)}</p>
+              <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+              <p><strong>Phone:</strong> ${escapeHtml(phone)}</p>
+              <p><strong>Context:</strong> ${escapeHtml(context)}</p>
             `
           });
         } catch (emailErr) {
@@ -131,10 +175,10 @@ module.exports = async (req, res) => {
             const sheet = doc.sheetsByIndex[0];
             await sheet.addRow({
               Date: new Date().toISOString(),
-              Name: name,
-              Email: email,
+              Name: sheetSafe(name),
+              Email: sheetSafe(email),
               Phone: "'" + phone,
-              Context: context
+              Context: sheetSafe(context)
             });
           } catch (sheetErr) {
             console.error("Failed to update Google Sheet:", sheetErr);
@@ -142,9 +186,18 @@ module.exports = async (req, res) => {
         }
 
         replyText = "Thank you! I've passed your information to our experts, and someone will reach out shortly. Is there anything else you're curious about in the meantime?";
+      } else {
+        // An unexpected tool name would otherwise leave replyText empty and
+        // surface to the user as a generic connection error.
+        console.warn('Unexpected function call from model:', call.name);
+        replyText = response.text || "Sorry, I didn't quite catch that. Could you rephrase?";
       }
     } else {
       replyText = response.text;
+    }
+
+    if (!replyText) {
+      replyText = "Sorry, I didn't quite catch that. Could you rephrase?";
     }
 
     res.status(200).json({ reply: replyText });

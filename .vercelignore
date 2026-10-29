@@ -1,0 +1,15 @@
+# Original PNG/JPEG masters, kept for re-export but never served.
+# The site references the .webp versions; only the handful still used by
+# og:image and the favicon remain alongside them in assets/images/.
+assets/images/_source/
+
+node_modules/
+.claude/
+# Superseded pages, build scripts and partials: kept in the repo for
+# reference and regeneration, never served.
+_archive/
+scripts/
+partials/
+
+# Preview builds. Never served.
+_preview/
